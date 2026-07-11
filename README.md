@@ -10,7 +10,7 @@ This extension brings the following functionality to ungoogled-chromium (and oth
 
 ## Why this fork
 
-In upstream, clicking an extension in the popup (or `Update all extensions`) often looked like it did nothing: the browser accepted the update, but the running extension kept its old version. That's because Chromium *stages* a CRX update over a running extension and only applies it after the extension unloads — usually a full browser restart (upstream issues [#4](https://github.com/NeverDecaf/chromium-web-store/issues/4), [#161](https://github.com/NeverDecaf/chromium-web-store/issues/161), [#167](https://github.com/NeverDecaf/chromium-web-store/issues/167)). Many people worked around it by uninstalling and reinstalling.
+The original is effectively unmaintained, and its biggest open bug never got fixed: clicking an extension in the popup (or `Update all extensions`) looked like it did nothing — the update was accepted but the running extension kept its old version, so the only reliable way to update was to uninstall and reinstall. This is a long-standing complaint upstream ([#4](https://github.com/NeverDecaf/chromium-web-store/issues/4), [#161](https://github.com/NeverDecaf/chromium-web-store/issues/161), [#167](https://github.com/NeverDecaf/chromium-web-store/issues/167)).
 
 This fork fixes that:
 
