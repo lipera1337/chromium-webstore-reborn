@@ -35,7 +35,7 @@ This fork fixes that:
 #### Installation
 
 1. Go to `chrome://flags` and search for the `#extension-mime-request-handling` flag and set it to `Always prompt for install`.
-2. Download the .crx from [Releases](https://github.com/lipera1337/chromium-webstore-reborn/releases/latest) ([direct link](https://github.com/lipera1337/chromium-webstore-reborn/releases/latest/download/chromium-webstore-reborn.crx)), you should be prompted to install the extension.
+2. Download the [.crx file](https://github.com/lipera1337/chromium-webstore-reborn/raw/master/chromium-webstore-reborn.crx) (also listed under [Releases](https://github.com/lipera1337/chromium-webstore-reborn/releases/latest)), you should be prompted to install the extension.
 
 If the above steps do not work for you, try one of the following alternative methods:
 
