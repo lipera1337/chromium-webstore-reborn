@@ -82,7 +82,7 @@ function prepareExtensionUpdate(ext_id, callback) {
         });
     });
 }
-function reenablePendingUpdates(only_id = null) {
+function reenablePendingUpdates(only_id = null, done = null) {
     chrome.storage.local.get({ pending_updates: {} }, (store) => {
         let pending = store.pending_updates;
         let changed = false;
@@ -94,8 +94,99 @@ function reenablePendingUpdates(only_id = null) {
             delete pending[id];
             changed = true;
         }
-        if (changed) chrome.storage.local.set({ pending_updates: pending });
+        if (changed)
+            chrome.storage.local.set({ pending_updates: pending }, () => {
+                if (done) done();
+            });
+        else if (done) done();
     });
+}
+
+// Multiple simultaneous crx installs make the native "Add extension?"
+// prompts overlap and stop working, so updates are queued in storage.local
+// and opened one at a time. The queue survives service worker unloads;
+// management.onInstalled and the timeout alarm drive it forward.
+const UPDATE_QUEUE_TIMEOUT_MINUTES = 2;
+let updateQueueChain = Promise.resolve();
+function withUpdateQueue(fn) {
+    // serialize read-modify-write access to the stored queue
+    updateQueueChain = updateQueueChain.then(
+        () =>
+            new Promise((resolve) => {
+                chrome.storage.local.get({ update_queue: [] }, (store) => {
+                    fn(store.update_queue, (newQueue) => {
+                        if (newQueue)
+                            chrome.storage.local.set(
+                                { update_queue: newQueue },
+                                resolve,
+                            );
+                        else resolve();
+                    });
+                });
+            }),
+    );
+}
+function enqueueUpdateInstall(ext_id, url) {
+    withUpdateQueue((queue, commit) => {
+        let existing = queue.findIndex((item) => item.extId == ext_id);
+        if (existing == -1) {
+            queue.push({ extId: ext_id, url: url, inFlight: false });
+            commit(queue);
+        } else if (existing == 0 && queue[0].inFlight) {
+            // the user dismissed the prompt and clicked again: reopen it
+            commit(null);
+            chrome.alarms.create("cws_update_queue_timeout", {
+                delayInMinutes: UPDATE_QUEUE_TIMEOUT_MINUTES,
+            });
+            prepareExtensionUpdate(ext_id, () => {
+                chrome.tabs.create({ active: false, url: url });
+            });
+        } else {
+            commit(null);
+        }
+    });
+    processUpdateQueue();
+}
+function processUpdateQueue() {
+    withUpdateQueue((queue, commit) => {
+        if (!queue.length) {
+            chrome.alarms.clear("cws_update_queue_timeout", () => {
+                void chrome.runtime.lastError;
+            });
+            commit(null);
+            return;
+        }
+        if (queue[0].inFlight) {
+            // still waiting on the current prompt
+            commit(null);
+            return;
+        }
+        queue[0].inFlight = true;
+        let current = queue[0];
+        commit(queue);
+        // fallback so a dismissed or ignored prompt doesn't stall the queue
+        chrome.alarms.create("cws_update_queue_timeout", {
+            delayInMinutes: UPDATE_QUEUE_TIMEOUT_MINUTES,
+        });
+        prepareExtensionUpdate(current.extId, () => {
+            chrome.tabs.create({ active: false, url: current.url });
+        });
+    });
+}
+function advanceUpdateQueue(installed_ext_id = null) {
+    withUpdateQueue((queue, commit) => {
+        let newQueue;
+        if (installed_ext_id == null) {
+            // timeout: drop the in-flight item
+            newQueue =
+                queue.length && queue[0].inFlight ? queue.slice(1) : queue;
+        } else {
+            // remove the installed extension wherever it sits in the queue
+            newQueue = queue.filter((item) => item.extId != installed_ext_id);
+        }
+        commit(newQueue.length != queue.length ? newQueue : null);
+    });
+    processUpdateQueue();
 }
 
 function startupTasks() {
@@ -130,7 +221,9 @@ chrome.action.setBadgeBackgroundColor({
     color: "#FE0000",
 });
 chrome.management.onInstalled.addListener(function (ext) {
-    reenablePendingUpdates(ext.id);
+    reenablePendingUpdates(ext.id, () => {
+        advanceUpdateQueue(ext.id);
+    });
     updateBadge(ext.id);
     for (let tabid of tabsAwaitingInstall) {
         chrome.tabs.sendMessage(
@@ -150,10 +243,22 @@ chrome.management.onUninstalled.addListener(function (ext) {
 });
 chrome.runtime.onStartup.addListener(function () {
     reenablePendingUpdates();
+    // staged installs don't survive a restart; the badge re-check will
+    // re-list anything that still needs updating
+    withUpdateQueue((queue, commit) => {
+        commit([]);
+    });
+    chrome.alarms.clear("cws_update_queue_timeout", () => {
+        void chrome.runtime.lastError;
+    });
     startupTasks();
 });
 chrome.alarms.onAlarm.addListener(function (alarm) {
     if (alarm.name == "cws_reenable_pending") reenablePendingUpdates();
+    if (alarm.name == "cws_update_queue_timeout")
+        reenablePendingUpdates(null, () => {
+            advanceUpdateQueue();
+        });
     if (alarm.name == "cws_check_extension_updates")
         chrome.storage.sync.get(
             DEFAULT_MANAGEMENT_OPTIONS,
@@ -218,9 +323,7 @@ const msgHandler = function (request, sender, sendResponse) {
     }
     if (request.newTabUrl) {
         if (request.updateExtId) {
-            prepareExtensionUpdate(request.updateExtId, () => {
-                chrome.tabs.create({ active: false, url: request.newTabUrl });
-            });
+            enqueueUpdateInstall(request.updateExtId, request.newTabUrl);
         } else {
             chrome.tabs.create({ active: false, url: request.newTabUrl });
         }
