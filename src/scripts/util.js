@@ -103,6 +103,7 @@ function promptInstall(
     is_webstore,
     browser = WEBSTORE.chrome,
     custom_msg_handler = undefined,
+    update_ext_id = undefined,
 ) {
     chrome.storage.sync.get(DEFAULT_MANAGEMENT_OPTIONS, function (settings) {
         var msgHandler = custom_msg_handler || chrome.runtime.sendMessage;
@@ -113,6 +114,7 @@ function promptInstall(
                     // instead use chrome.tabs to open the url in a new tab.
                     msgHandler({
                         newTabUrl: crx_url,
+                        updateExtId: update_ext_id,
                     });
                     break;
                 case WEBSTORE.opera:
@@ -125,6 +127,7 @@ function promptInstall(
                     // copy the edge method instead of window.open(,_blank) so this works in the service worker (mv3)
                     msgHandler({
                         newTabUrl: crx_url,
+                        updateExtId: update_ext_id,
                     });
                     break;
             }

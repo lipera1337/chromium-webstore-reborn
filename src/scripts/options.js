@@ -90,7 +90,13 @@ function load_options() {
                     is_webstore
                 ) {
                     let crx_url = updateCheck["@codebase"];
-                    promptInstall(crx_url, is_webstore);
+                    promptInstall(
+                        crx_url,
+                        is_webstore,
+                        WEBSTORE.chrome,
+                        undefined,
+                        appid
+                    );
                 },
                 null,
                 null,

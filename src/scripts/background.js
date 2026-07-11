@@ -13,7 +13,13 @@ function handleContextClick(info, tab) {
             is_webstore,
         ) {
             let crx_url = updateCheck["@codebase"];
-            promptInstall(crx_url, is_webstore, WEBSTORE.chrome, msgHandler);
+            promptInstall(
+                crx_url,
+                is_webstore,
+                WEBSTORE.chrome,
+                msgHandler,
+                appid,
+            );
         });
     else if (info.menuItemId == "installExt") {
         let store = WEBSTORE.chrome;
@@ -32,6 +38,64 @@ function handleContextClick(info, tab) {
 
 function updateBadge(modified_ext_id = null) {
     checkForUpdates();
+}
+
+// Chromium won't apply a crx update to a running extension until its
+// background page unloads (usually browser restart, see issue #4). To make
+// updates apply immediately, disable the extension before opening the crx,
+// then re-enable it once management.onInstalled reports the new version.
+const REENABLE_FALLBACK_MINUTES = 5;
+function prepareExtensionUpdate(ext_id, callback) {
+    if (ext_id == chrome.runtime.id) {
+        callback();
+        return;
+    }
+    chrome.management.get(ext_id, (extinfo) => {
+        if (
+            chrome.runtime.lastError ||
+            !extinfo ||
+            !extinfo.enabled ||
+            !extinfo.mayDisable
+        ) {
+            callback();
+            return;
+        }
+        chrome.management.setEnabled(ext_id, false, () => {
+            if (chrome.runtime.lastError) {
+                callback();
+                return;
+            }
+            chrome.storage.local.get({ pending_updates: {} }, (store) => {
+                store.pending_updates[ext_id] = true;
+                chrome.storage.local.set(
+                    { pending_updates: store.pending_updates },
+                    () => {
+                        // fallback so a canceled install doesn't leave the
+                        // extension disabled forever
+                        chrome.alarms.create("cws_reenable_pending", {
+                            delayInMinutes: REENABLE_FALLBACK_MINUTES,
+                        });
+                        callback();
+                    },
+                );
+            });
+        });
+    });
+}
+function reenablePendingUpdates(only_id = null) {
+    chrome.storage.local.get({ pending_updates: {} }, (store) => {
+        let pending = store.pending_updates;
+        let changed = false;
+        for (let id of Object.keys(pending)) {
+            if (only_id && id !== only_id) continue;
+            chrome.management.setEnabled(id, true, () => {
+                void chrome.runtime.lastError;
+            });
+            delete pending[id];
+            changed = true;
+        }
+        if (changed) chrome.storage.local.set({ pending_updates: pending });
+    });
 }
 
 function startupTasks() {
@@ -66,6 +130,7 @@ chrome.action.setBadgeBackgroundColor({
     color: "#FE0000",
 });
 chrome.management.onInstalled.addListener(function (ext) {
+    reenablePendingUpdates(ext.id);
     updateBadge(ext.id);
     for (let tabid of tabsAwaitingInstall) {
         chrome.tabs.sendMessage(
@@ -84,9 +149,11 @@ chrome.management.onUninstalled.addListener(function (ext) {
     updateBadge(ext.id);
 });
 chrome.runtime.onStartup.addListener(function () {
+    reenablePendingUpdates();
     startupTasks();
 });
 chrome.alarms.onAlarm.addListener(function (alarm) {
+    if (alarm.name == "cws_reenable_pending") reenablePendingUpdates();
     if (alarm.name == "cws_check_extension_updates")
         chrome.storage.sync.get(
             DEFAULT_MANAGEMENT_OPTIONS,
@@ -150,7 +217,13 @@ const msgHandler = function (request, sender, sendResponse) {
         );
     }
     if (request.newTabUrl) {
-        chrome.tabs.create({ active: false, url: request.newTabUrl });
+        if (request.updateExtId) {
+            prepareExtensionUpdate(request.updateExtId, () => {
+                chrome.tabs.create({ active: false, url: request.newTabUrl });
+            });
+        } else {
+            chrome.tabs.create({ active: false, url: request.newTabUrl });
+        }
     }
     if (request.checkExtInstalledId) {
         chrome.management.get(request.checkExtInstalledId, (extinfo) => {

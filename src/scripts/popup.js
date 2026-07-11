@@ -74,7 +74,14 @@ checkForUpdates(
         li.setAttribute("crx_url", updateCheck["@codebase"]);
         let crx_url = updateCheck["@codebase"];
         li.addEventListener("click", function (evt) {
-            if (evt.target.tagName != "A") promptInstall(crx_url, is_webstore);
+            if (evt.target.tagName != "A")
+                promptInstall(
+                    crx_url,
+                    is_webstore,
+                    WEBSTORE.chrome,
+                    undefined,
+                    appid,
+                );
         });
         appcontainer.appendChild(li);
         update_status.classList.add("hidden");
